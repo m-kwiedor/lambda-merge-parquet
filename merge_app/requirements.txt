@@ -1,0 +1,16 @@
+#boto3==1.14.37
+#botocore==1.17.37
+#Cython==0.29.21
+#docutils==0.15.2
+#llvmlite==0.34.0
+#numba==0.51.0
+#numpy==1.19.1
+#packaging==20.4
+#pandas==1.1.0
+#pyparsing==2.4.7
+#python-dateutil==2.8.1
+#pytz==2020.1
+#s3transfer==0.3.3
+#six==1.15.0
+#thrift==0.13.0
+#urllib3==1.25.10

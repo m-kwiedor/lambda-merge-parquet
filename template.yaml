@@ -1,0 +1,137 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Parquet Merge Lambda
+
+
+Parameters:
+  S3BUCKET:
+    Description: Name of the S3 Bucket which contains the Parquet Data
+    Type: String
+  TTLMINUTES:
+    Description: Time in minutes of files which should not merged at process
+    Type: Number
+    Default: 10
+  SNSEMAIL:
+    Description: Email to get informed on failures
+    Type: String
+  RULECRON:
+    Description: Cron value for CloudWatch Event Rule # See https://docs.aws.amazon.com/AmazonCloudWatch/latest/events/ScheduledEvents.html
+    Type: String
+    Default: "rate(60 minutes)"
+  MEMORYSIZE:
+    Description: The amount of memory that your function has access to. Increasing the function's memory also increases its CPU allocation. The default value is 128 MB.
+    Type: Number
+    Default: 256
+
+Globals:
+  Function:
+    Timeout: 900
+    Environment:
+      Variables:
+        S3_BUCKET: !Ref S3BUCKET
+        TTL_MINUTES: !Ref TTLMINUTES
+
+Resources:
+  MergeParquetFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: merge_app/
+      Handler: app.lambda_handler
+      Runtime: python3.7
+      MemorySize: !Ref MEMORYSIZE
+      Layers:
+        - !Ref FastParquetLayer
+      DeadLetterQueue:
+        TargetArn: !Ref Topic
+        Type: SNS
+      Policies:
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*
+            - Effect: Allow
+              Action:
+                - s3:ListObjects
+                - s3:DeleteObject
+                - s3:GetObject
+                - s3:PutObject
+              Resource:
+                - "arn:aws:s3:::kwiedorm-test-public1"
+                - "arn:aws:s3:::kwiedorm-test-public1/*"
+
+  FastParquetLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: fastparquet
+      Description: FastParquet dependency for parquet merge app
+      ContentUri: dependencies/fastparquet
+      CompatibleRuntimes:
+        - python3.7
+      RetentionPolicy: Delete
+    Metadata:
+      BuildMethod: makefile
+
+  #
+  # CloudWatch Events Rule
+
+  ScheduledRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Parquet Merge Event Rule"
+      ScheduleExpression: !Ref RULECRON
+      State: ENABLED
+      Targets: 
+        - Arn: !GetAtt MergeParquetFunction.Arn
+          Id: MergeParquetFunctionTarget
+  PermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref MergeParquetFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ScheduledRule.Arn
+
+  #
+  # SNS Topic
+  #
+
+  Topic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: Parquet Merge Lambda
+
+  TopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      PolicyDocument:
+        Id: ParquetMergeLambdaTopicPolicy
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Sid1
+            Effect: Allow
+            Principal:
+              AWS: !Sub "${AWS::AccountId}" # Allow CloudWatch Alarms
+            Action: sns:Publish
+            Resource: "*"
+      Topics:
+        - !Ref Topic
+
+  TopicEndpointSubscription:
+    DependsOn: TopicPolicy
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !Ref SNSEMAIL
+      Protocol: email
+      TopicArn: !Ref Topic
+
+Outputs:
+  MergeParquetFunction:
+    Description: "Hello World Lambda Function ARN"
+    Value: !GetAtt MergeParquetFunction.Arn
+  MergeParquetFunctionIamRole:
+    Description: "Implicit IAM Role created for Hello World function"
+    Value: !GetAtt MergeParquetFunctionRole.Arn
